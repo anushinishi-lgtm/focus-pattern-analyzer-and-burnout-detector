@@ -65,7 +65,14 @@ for k, v in defaults.items():
 # ---------------- FACE DETECTION ----------------
 @st.cache_resource
 def load_cascade():
-    return cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    # Avoid relying on cv2.data, which is absent in some Cloud OpenCV builds.
+    cascade_path = os.path.join(
+        os.path.dirname(cv2.__file__), "data", "haarcascade_frontalface_default.xml"
+    )
+    cascade = cv2.CascadeClassifier(cascade_path)
+    if cascade.empty():
+        raise RuntimeError(f"Could not load face detector: {cascade_path}")
+    return cascade
 
 face_cascade = load_cascade()
 
