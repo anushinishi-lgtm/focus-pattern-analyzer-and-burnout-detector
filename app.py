@@ -42,6 +42,7 @@ today = str(date.today())
 defaults = {
     "running": False,
     "focus_time": 0,
+    "session_started_at": None,
     "last_time": time.time(),
     "cap": None,
     "last_seen_time": time.time(),
@@ -195,14 +196,14 @@ with tab1:
 
     if st.button("▶ Start Session"):
         st.session_state.running = True
-        st.session_state.cap = cv2.VideoCapture(0)
+        st.session_state.session_started_at = time.time()
         st.session_state.last_time = time.time()
         st.session_state.pomodoro_start = time.time()
 
     if st.button("⛔ Stop & Save"):
         st.session_state.running = False
-        if st.session_state.cap:
-            st.session_state.cap.release()
+        if st.session_state.session_started_at is not None:
+            st.session_state.focus_time = time.time() - st.session_state.session_started_at
 
         data = load_data()
         mins = int(st.session_state.focus_time)//60
@@ -229,71 +230,26 @@ with tab1:
             save_data(data)
 
         st.session_state.focus_time = 0
+        st.session_state.session_started_at = None
         st.rerun()
 
-    frame_placeholder = st.empty()
-
     if st.session_state.running:
-        while True:
-            ret, frame = st.session_state.cap.read()
-            if not ret: break
+        st.info("Allow browser camera access, then take a photo to check your presence.")
+        camera_image = st.camera_input("Camera check", key="browser_camera")
 
-            now = time.time()
-            delta = now - st.session_state.last_time
-            st.session_state.last_time = now
+        if st.session_state.session_started_at is not None:
+            st.session_state.focus_time = time.time() - st.session_state.session_started_at
+        minutes, seconds = divmod(int(st.session_state.focus_time), 60)
+        st.metric("Session time", f"{minutes:02}:{seconds:02}")
 
-            face = detect_face(frame)
-            if face:
-                st.session_state.last_seen_time = now
-                st.session_state.last_active_time = now
-
-            is_focused = (now - st.session_state.last_seen_time) < 15
-
-            # Pomodoro
-            timer_text = ""
-            if st.session_state.mode == "pomodoro":
-                elapsed = now - st.session_state.pomodoro_start
-                if st.session_state.pomodoro_state == "focus":
-                    remaining = st.session_state.pomodoro_duration - elapsed
-                    if remaining <= 0:
-                        st.session_state.pomodoro_state = "break"
-                        st.session_state.pomodoro_start = now
-                        st.warning("Break started")
-                        st.info(get_break_activity())
+        if camera_image is not None:
+            image_bytes = np.frombuffer(camera_image.getvalue(), np.uint8)
+            frame = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+            if frame is not None:
+                if detect_face(frame):
+                    st.success("Face detected — you are present.")
                 else:
-                    remaining = st.session_state.break_duration - elapsed
-                    if remaining <= 0:
-                        st.session_state.pomodoro_state = "focus"
-                        st.session_state.pomodoro_start = now
-
-                if st.session_state.pomodoro_state == "break":
-                    is_focused = False
-
-                rm, rs = divmod(max(0,int(remaining)),60)
-                timer_text = f"{st.session_state.pomodoro_state.upper()} {rm:02}:{rs:02}"
-
-            # cooldown
-            if st.session_state.focus_time/60 > 60:
-                st.session_state.cooldown_until = now + 300
-
-            if now < st.session_state.cooldown_until:
-                is_focused = False
-
-            # inactivity
-            if now - st.session_state.last_active_time > 120:
-                st.warning("Inactive detected")
-
-            if is_focused:
-                st.session_state.focus_time += delta
-
-            m,s = divmod(int(st.session_state.focus_time),60)
-
-            cv2.putText(frame,f"{timer_text} | {m:02}:{s:02}",
-                        (20,50),cv2.FONT_HERSHEY_SIMPLEX,1,
-                        (0,255,0) if is_focused else (0,0,255),2)
-
-            frame_placeholder.image(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB))
-            time.sleep(0.05)
+                    st.warning("No face detected. Try a brighter, front-facing photo.")
 
 # ================= TAB 2 =================
 with tab2:
